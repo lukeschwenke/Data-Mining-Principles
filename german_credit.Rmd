@@ -1,0 +1,165 @@
+---
+title: "Assignment #1: German Credit"
+author: "Luke Schwenke"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(caret)
+library(dplyr)
+library(ggplot2)
+
+data(GermanCredit)
+```
+
+## Regression Model
+
+```{r model}
+
+df <- GermanCredit
+df <- df %>% select(-Class) # Remove class variables
+
+full_model <- lm(Amount ~ ., data=df)
+#summary(full_model)
+
+# Save and Print Coefficients
+full_model_coeff <- full_model$coefficients
+full_model_coeff
+
+```
+
+## Split into Train/Test Sets and Run Model 1,000 times
+
+```{r set_seed, echo=FALSE, warning=FALSE}
+
+set.seed(777)
+
+df$id <- 1:nrow(df)
+
+my_df <- data.frame()
+for(n in 1:1000){
+  
+  # Split 63.20% of the data into the train set and the rest into test
+  train <- df %>% dplyr::sample_frac(0.632)
+  test  <- dplyr::anti_join(df, train, by = 'id')
+  
+  # Run the linear model on all the independent variables
+  model <- lm(Amount ~., data=train)
+  
+  # Capture the predictions on the Test / Holdout set
+  predictions <- predict(model, test)
+  
+  # Save the coefficients, and R-squared for the training and holdout
+  save_coeff <- model$coefficients
+  save_r2_training <- summary(model)$r.squared
+  save_r2_holdout <- cor(test$Amount, predict(model, newdata = test))^2
+  
+  con <- c(save_coeff, save_r2_training, save_r2_holdout)
+  my_df <- rbind(my_df, con)
+}
+
+# Update Column Names
+colnames(my_df)[1:62] <- names(df)
+colnames(my_df)[63] <- "training_r2"
+colnames(my_df)[64] <- "holdout_r2"
+
+head(my_df, 1)
+
+```
+
+## Coefficient & R-Squared Distributions
+
+```{r coeff distributions - Age}
+
+hist(my_df$Age, 
+     breaks=30,
+     xlab = "Coefficients", main = "Coefficient Distribution - Age")
+
+```
+
+### Plot Interpretation: the age coefficients are sometimes negatives which is the opposite of what I would normall think. Generally older people have higher credit, so seeing that the model sometimes says a higher age means less credit is surprising. Overall the plot indicates age tends to have a positive impact on credit amount.
+
+```{r coeff distributions - Residence Duration, echo=TRUE}
+hist(my_df$ResidenceDuration, 
+     breaks=30,
+     xlab = "Coefficients", main = "Coefficient Distribution - Residence Duration", col="lightblue")
+```
+
+### Plot Interpretation: 
+
+```{r coeff distributions - Housing Rent, echo=TRUE}
+hist(my_df$Housing.Rent, 
+     breaks=30,
+     xlab = "Coefficients", main = "Coefficient Distribution - Housing Rent", col="lightgreen")
+```
+
+```{r distributions - Training R2, echo=TRUE, warning=FALSE}
+hist(my_df$training_r2, 
+     breaks=30,
+     xlab = "Training R-Squared Values", main = "Distribution of Training R-Squared", col="pink")
+```
+
+```{r distributions - R2 difference, echo=TRUE, warning=FALSE}
+my_df <- my_df %>% mutate(r2_decrease = (training_r2 - holdout_r2)/training_r2)
+head(my_df$r2_decrease, 5)
+
+hist(my_df$r2_decrease, 
+     breaks=30,
+     xlab = "Decrease Values", main = "Distribution of R-Squared Decrease (Training vs. Holdout)",    
+     col="lightyellow")
+
+```
+
+### Summary - Interpretation of Above Plots: 
+
+```{r means and sds, echo=TRUE, warning=FALSE}
+
+coefficient_means <- colMeans(my_df)
+head(coefficient_means, 5)
+
+coefficient_sds <- sapply(my_df, sd)
+head(coefficient_sds, 5)
+
+
+# Difference between coefficient_means and actual model coefficients
+bind <- data.frame(cbind(coefficient_means, save_coeff))
+bind$abs_diff <- abs(coefficient_means - save_coeff)
+bind$percent_diff <- 100*abs(((coefficient_means - save_coeff) / save_coeff))
+
+print(bind %>% na.omit())
+```
+
+## Calculate Confidence Intervals & Width
+```{r CI, echo=TRUE, warning=FALSE}
+
+View(my_df)
+
+# Confidence Interval for Rep 1,000 Coefficients
+# Transposed dataframe of confidence intervals for each variable
+rep_conf <- data.frame(t(sapply(my_df[1:61], function(x) Rmisc::CI(x, ci=0.975)))) %>% na.omit()
+# Calculate Width
+rep_conf$width <- (conf$upper-conf$lower)*sqrt(0.632)
+
+# Reorder columns
+rep_conf <- rep_conf %>% select(lower, upper)
+
+# Confidence Interval for Full Model
+full_model_conf <- data.frame(confint(full_model)) %>% 
+                   na.omit() %>% 
+                   dplyr::rename(lower = 1, upper = 2)
+
+full_model_conf <- full_model_conf %>% 
+                   mutate(index=1:nrow(full_model_conf)) %>% 
+                   filter(index %in% (2:48)) %>% 
+                   mutate(width=upper-lower)
+
+row.names(rep_conf) == row.names(full_model_conf)
+
+View(cbind(row.names(rep_conf),row.names(full_model_conf)))
+
+```
+
+
