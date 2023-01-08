@@ -37,15 +37,22 @@ full_model_coeff
 
 set.seed(777)
 
+# Create ID to help with splitting into Train/Test
 df$id <- 1:nrow(df)
 
 my_df <- data.frame()
+
+# Run 1,000 Linear models
 for(n in 1:1000){
   
   # Split 63.20% of the data into the train set and the rest into test
   train <- df %>% dplyr::sample_frac(0.632)
-  test  <- dplyr::anti_join(df, train, by = 'id')
+  test  <- dplyr::anti_join(df, train, by = 'id') 
   
+  # Drop id column before running model since it does not have value
+  train$id <- NULL
+  test$id  <- NULL
+
   # Run the linear model on all the independent variables
   model <- lm(Amount ~., data=train)
   
@@ -61,12 +68,21 @@ for(n in 1:1000){
   my_df <- rbind(my_df, con)
 }
 
-# Update Column Names
-colnames(my_df)[1:62] <- names(df)
-colnames(my_df)[63] <- "training_r2"
-colnames(my_df)[64] <- "holdout_r2"
+# Remove ID variable and Amount variable
+df$id <- NULL
+df$Amount <- NULL
 
-head(my_df, 1)
+# Drop dependent variable Amount and remove na
+
+# my_df <- my_df %>% select(-Amount) %>% na.omit()
+
+# Update Column Names
+colnames(my_df)[1] <- "(Intercept)"
+colnames(my_df)[2:61] <- names(df)
+colnames(my_df)[62] <- "training_r2"
+colnames(my_df)[63] <- "holdout_r2"
+
+head(my_df, 3)
 
 ```
 
@@ -135,30 +151,38 @@ print(bind %>% na.omit())
 ## Calculate Confidence Intervals & Width
 ```{r CI, echo=TRUE, warning=FALSE}
 
-View(my_df)
-
-# Confidence Interval for Rep 1,000 Coefficients
+# Confidence Interval for Rep 1,000 Coefficients -------------------------------
 # Transposed dataframe of confidence intervals for each variable
-rep_conf <- data.frame(t(sapply(my_df[1:61], function(x) Rmisc::CI(x, ci=0.975)))) %>% na.omit()
+rep_conf <- data.frame(t(sapply(my_df[1:63], function(x) Rmisc::CI(x, ci=0.975)))) #%>% na.omit()
 # Calculate Width
-rep_conf$width <- (conf$upper-conf$lower)*sqrt(0.632)
+rep_conf$width <- (rep_conf$upper-rep_conf$lower)*sqrt(0.632)
 
 # Reorder columns
 rep_conf <- rep_conf %>% select(lower, upper)
 
-# Confidence Interval for Full Model
+# Check row count after ommitting NA
+nrow(rep_conf)
+
+# Confidence Interval for Full Model -------------------------------------------
+# Calculate confidence interval and rename the columns
 full_model_conf <- data.frame(confint(full_model)) %>% 
-                   na.omit() %>% 
+                   #na.omit() %>% 
                    dplyr::rename(lower = 1, upper = 2)
 
+# A
 full_model_conf <- full_model_conf %>% 
-                   mutate(index=1:nrow(full_model_conf)) %>% 
-                   filter(index %in% (2:48)) %>% 
+                   #mutate(index=1:nrow(full_model_conf)) %>% 
+                   #filter(index %in% (2:48)) %>% 
                    mutate(width=upper-lower)
+
+# Check row count
+nrow(full_model_conf)
+
+t <- cbind(rep_conf, full_model_conf)
 
 row.names(rep_conf) == row.names(full_model_conf)
 
-View(cbind(row.names(rep_conf),row.names(full_model_conf)))
+View(cbind(row.names(rep_conf), row.names(full_model_conf)))
 
 ```
 
