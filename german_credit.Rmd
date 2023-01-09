@@ -15,15 +15,15 @@ library(ggplot2)
 data(GermanCredit)
 ```
 
-## Regression Model
+# Regression Model
 
-```{r model}
+```{r model, echo=TRUE, warning=FALSE}
 
 df <- GermanCredit
-df <- df %>% select(-Class) # Remove class variables
+df <- df %>% select(-Class) # Remove Class variable
 
 full_model <- lm(Amount ~ ., data=df)
-#summary(full_model)
+# summary(full_model)
 
 # Save and Print Coefficients
 full_model_coeff <- full_model$coefficients
@@ -31,9 +31,9 @@ full_model_coeff
 
 ```
 
-## Split into Train/Test Sets and Run Model 1,000 times
+# Split into Train/Test Sets and Run Model 1,000 times
 
-```{r set_seed, echo=FALSE, warning=FALSE}
+```{r set_seed, echo=TRUE, warning=FALSE}
 
 set.seed(777)
 
@@ -123,7 +123,7 @@ my_df <- my_df %>% mutate(r2_decrease = (training_r2 - holdout_r2)/training_r2)
 head(my_df$r2_decrease, 5)
 
 hist(my_df$r2_decrease, 
-     breaks=30,
+     breaks=12,
      xlab = "Decrease Values", main = "Distribution of R-Squared Decrease (Training vs. Holdout)",    
      col="lightyellow")
 
@@ -153,37 +153,90 @@ print(bind %>% na.omit())
 
 # Confidence Interval for Rep 1,000 Coefficients -------------------------------
 # Transposed dataframe of confidence intervals for each variable
-rep_conf <- data.frame(t(sapply(my_df[1:63], function(x) Rmisc::CI(x, ci=0.975)))) #%>% na.omit()
+rep_conf <- data.frame(t(sapply(my_df[,1:63], function(x) Rmisc::CI(x, ci=0.975)))) #%>% na.omit()
+
 # Calculate Width
-rep_conf$width <- (rep_conf$upper-rep_conf$lower)*sqrt(0.632)
+# rep_conf$width <- (rep_conf$upper-rep_conf$lower)*sqrt(0.632)
+rep_conf$width <- rep_conf$upper-(rep_conf$lower*sqrt(0.632))
+
+# MANUAL CHECK =============================
+# Calculate Means
+means <- data.frame(means=sapply(my_df[1:61], function(x) mean(x)))
+n <- 1000
+# Calculate Standard Deviation
+std_dev <- data.frame(std_dev=sapply(my_df[1:61], function(x) sd(x)))
+
+std_error <- std_dev / sqrt(n)
+alpha = 0.025
+degrees_of_freedom = n-1
+t_score = qt(p=alpha/2, df=degrees_of_freedom,lower.tail=F)
+margin_error <- t_score * std_error
+
+lower_bound_new <- means - margin_error
+upper_bound_new <- means + margin_error
+
+x <- cbind(lower_bound_new, upper_bound_new) %>% dplyr::rename(lower_new = 1, upper_new = 2)
+
+margin <- qnorm(0.975)*std
+rep_CI_low_manual <- means - margin
+rep_CI_high_manual <- means + margin
+manual <- cbind(rep_CI_low_manual, rep_CI_high_manual) %>% 
+                dplyr::rename(lower_manual = 1, upper_manual = 2)
+
+
+# =============================
 
 # Reorder columns
-rep_conf <- rep_conf %>% select(lower, upper)
+rep_conf <- rep_conf %>% select(lower, upper, width)
+
+# Keep only valid columns, remove R2 values
+rep_conf <- rep_conf[1:61,]
+
+# COMBINE for check
+z <- cbind(rep_conf, manual)
+z$width_manual <- z$upper_manual - z$lower_manual*sqrt(0.632)
+View(z)
 
 # Check row count after ommitting NA
 nrow(rep_conf)
 
 # Confidence Interval for Full Model -------------------------------------------
 # Calculate confidence interval and rename the columns
-full_model_conf <- data.frame(confint(full_model)) %>% 
+full_model_conf <- data.frame(confint(full_model, level=0.975)) %>% 
                    #na.omit() %>% 
-                   dplyr::rename(lower = 1, upper = 2)
+                   dplyr::rename(lower_full = 1, upper_full = 2)
 
 # A
 full_model_conf <- full_model_conf %>% 
                    #mutate(index=1:nrow(full_model_conf)) %>% 
                    #filter(index %in% (2:48)) %>% 
-                   mutate(width=upper-lower)
+                   mutate(width_full=upper_full-lower_full)
 
 # Check row count
 nrow(full_model_conf)
 
-t <- cbind(rep_conf, full_model_conf)
+#t <- cbind(rep_conf, full_model_conf)
 
 row.names(rep_conf) == row.names(full_model_conf)
 
-View(cbind(row.names(rep_conf), row.names(full_model_conf)))
+#View(cbind(row.names(rep_conf), row.names(full_model_conf)))
+
+```
+## Determine how many of the repeated sample CI's are tighter
+```{r Final Calcs, echo=TRUE, warning=FALSE}
+
+# Combine the 2 dataframes and remove NA values
+calc <- cbind(rep_conf, full_model_conf) %>% na.omit()
+
+#Calculate how many of the repeated sample CI’s are tighter or broader than the full model CI’s. If the #width is smaller, the CI is tighter. If the width is bigger, the CI is broader.
+
+# 1 means the CI is tighter (width of repeated is smaller)
+calc$tighter_CI_flag <- ifelse(calc$width < calc$width_full, 1, 0)
+
+percent <- sum(calc$tighter_CI_flag)/nrow(calc)
+print(percent*100)
 
 ```
 
+## Conclusion: 97.87% of the simulated/repeated model's CI's are tighter/smaller. In other words, of the 47 columns left after removing NA's and the class column, 46 of the columns' confidence intervals from the repeated samples are smaller/tighter than those comapred to the CI's from the full model.
 
