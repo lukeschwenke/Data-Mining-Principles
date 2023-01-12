@@ -20,7 +20,7 @@ data(GermanCredit)
 ```{r model, echo=TRUE, warning=FALSE}
 
 df <- GermanCredit
-df <- df %>% select(-Class) # Remove Class variable
+df <- df %>% dplyr::select(-Class) # Remove Class variable
 
 full_model <- lm(Amount ~ ., data=df)
 # summary(full_model)
@@ -157,31 +157,31 @@ rep_conf <- data.frame(t(sapply(my_df[,1:63], function(x) Rmisc::CI(x, ci=0.975)
 
 # Calculate Width
 # rep_conf$width <- (rep_conf$upper-rep_conf$lower)*sqrt(0.632)
-rep_conf$width <- rep_conf$upper-(rep_conf$lower*sqrt(0.632))
+rep_conf$width <- (rep_conf$upper-rep_conf$lower)*sqrt(0.632)
 
 # MANUAL CHECK =============================
 # Calculate Means
-means <- data.frame(means=sapply(my_df[1:61], function(x) mean(x)))
-n <- 1000
+#means <- data.frame(means=sapply(my_df[1:61], function(x) mean(x)))
+#n <- 1000
 # Calculate Standard Deviation
-std_dev <- data.frame(std_dev=sapply(my_df[1:61], function(x) sd(x)))
+#std_dev <- data.frame(std_dev=sapply(my_df[1:61], function(x) sd(x)))
 
-std_error <- std_dev / sqrt(n)
-alpha = 0.025
-degrees_of_freedom = n-1
-t_score = qt(p=alpha/2, df=degrees_of_freedom,lower.tail=F)
-margin_error <- t_score * std_error
+#std_error <- std_dev / sqrt(n)
+#alpha = 0.025
+#degrees_of_freedom = n-1
+#t_score = qt(p=alpha/2, df=degrees_of_freedom,lower.tail=F)
+#margin_error <- t_score * std_error
 
-lower_bound_new <- means - margin_error
-upper_bound_new <- means + margin_error
+#lower_bound_new <- means - margin_error
+#upper_bound_new <- means + margin_error
 
-x <- cbind(lower_bound_new, upper_bound_new) %>% dplyr::rename(lower_new = 1, upper_new = 2)
+#x <- cbind(lower_bound_new, upper_bound_new) %>% dplyr::rename(lower_new = 1, upper_new = 2)
 
-margin <- qnorm(0.975)*std
-rep_CI_low_manual <- means - margin
-rep_CI_high_manual <- means + margin
-manual <- cbind(rep_CI_low_manual, rep_CI_high_manual) %>% 
-                dplyr::rename(lower_manual = 1, upper_manual = 2)
+#margin <- qnorm(0.975)*std
+#rep_CI_low_manual <- means - margin
+#rep_CI_high_manual <- means + margin
+#manual <- cbind(rep_CI_low_manual, rep_CI_high_manual) %>% 
+#                dplyr::rename(lower_manual = 1, upper_manual = 2)
 
 
 # =============================
@@ -193,9 +193,9 @@ rep_conf <- rep_conf %>% select(lower, upper, width)
 rep_conf <- rep_conf[1:61,]
 
 # COMBINE for check
-z <- cbind(rep_conf, manual)
-z$width_manual <- z$upper_manual - z$lower_manual*sqrt(0.632)
-View(z)
+#z <- cbind(rep_conf, manual)
+#z$width_manual <- z$upper_manual - z$lower_manual*sqrt(0.632)
+#View(z)
 
 # Check row count after ommitting NA
 nrow(rep_conf)
