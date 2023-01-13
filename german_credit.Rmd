@@ -23,7 +23,6 @@ df <- GermanCredit
 df <- df %>% dplyr::select(-Class) # Remove Class variable
 
 full_model <- lm(Amount ~ ., data=df)
-# summary(full_model)
 
 # Save and Print Coefficients
 full_model_coeff <- full_model$coefficients
@@ -40,12 +39,13 @@ set.seed(777)
 # Create ID to help with splitting into Train/Test
 df$id <- 1:nrow(df)
 
+# Initialize empty Data Frame
 my_df <- data.frame()
 
 # Run 1,000 Linear models
 for(n in 1:1000){
   
-  # Split 63.20% of the data into the train set and the rest into test
+  # Split 63.20% of the data into the train set and the rest into the test set
   train <- df %>% dplyr::sample_frac(0.632)
   test  <- dplyr::anti_join(df, train, by = 'id') 
   
@@ -68,13 +68,9 @@ for(n in 1:1000){
   my_df <- rbind(my_df, con)
 }
 
-# Remove ID variable and Amount variable
+# Remove ID variable and Amount (dependent) variable
 df$id <- NULL
 df$Amount <- NULL
-
-# Drop dependent variable Amount and remove na
-
-# my_df <- my_df %>% select(-Amount) %>% na.omit()
 
 # Update Column Names
 colnames(my_df)[1] <- "(Intercept)"
@@ -96,7 +92,6 @@ hist(my_df$Age,
 
 ```
 
-### Plot Interpretation: the age coefficients are sometimes negatives which is the opposite of what I would normall think. Generally older people have higher credit, so seeing that the model sometimes says a higher age means less credit is surprising. Overall the plot indicates age tends to have a positive impact on credit amount.
 
 ```{r coeff distributions - Residence Duration, echo=TRUE}
 hist(my_df$ResidenceDuration, 
@@ -112,10 +107,21 @@ hist(my_df$Housing.Rent,
      xlab = "Coefficients", main = "Coefficient Distribution - Housing Rent", col="lightgreen")
 ```
 
+## Summary - Interpretation of Above Plots ~ all plots printed above are fairly normally distributed. See individual interpretations here:
+
+### Age: the age coefficients are sometimes negatives which is the opposite of what I would normally think. Generally older people have higher credit, so seeing that the model sometimes says a higher age means a lesser loan is surprising. Overall the plot indicates age tends to have a positive impact on the loan amount, i.e., older people get higher loans.
+
+### Residence Duration: this coefficient value is mostly negative meaning the longer someone resides in a location, the lower their predicted loan Amount. This may be because wealthier people who can get higher loans tend to move around more and can afford to move to new places. This matches expectations.
+
+### Housing Rent: this coefficient value is mostly positive meaning the higher someone's rent the higher their predicted loan amount tends to be. This makes sense is people who can afford more expensive living places will generally be approved for higher loans due to high credit scores and proof of income.
+
 ```{r distributions - Training R2, echo=TRUE, warning=FALSE}
 hist(my_df$training_r2, 
      breaks=30,
      xlab = "Training R-Squared Values", main = "Distribution of Training R-Squared", col="pink")
+
+mean(my_df$training_r2)
+median(my_df$training_r2)
 ```
 
 ```{r distributions - R2 difference, echo=TRUE, warning=FALSE}
@@ -127,9 +133,13 @@ hist(my_df$r2_decrease,
      xlab = "Decrease Values", main = "Distribution of R-Squared Decrease (Training vs. Holdout)",    
      col="lightyellow")
 
+mean(my_df$r2_decrease)
+median(my_df$r2_decrease)
 ```
 
-### Summary - Interpretation of Above Plots: 
+## Interpretation:
+### These plots are also normally distributed and indicate that on average we can expect around a 12% percentage decrease from our training dataset R-squared of 62% to our holdout dataset. This means the model performs slightly worse on the holdout data. This is to be expected because this is unseen data -- we just want the model to be able to generalize well, not necessarily have an excellent R-squared value. This is a good result.
+
 
 ```{r means and sds, echo=TRUE, warning=FALSE}
 
@@ -142,7 +152,7 @@ head(coefficient_sds, 5)
 
 # Difference between coefficient_means and actual model coefficients
 bind <- data.frame(cbind(coefficient_means, save_coeff))
-bind$abs_diff <- abs(coefficient_means - save_coeff)
+bind$abs_raw_diff <- abs(coefficient_means - save_coeff)
 bind$percent_diff <- 100*abs(((coefficient_means - save_coeff) / save_coeff))
 
 print(bind %>% na.omit())
@@ -206,7 +216,7 @@ full_model_conf <- data.frame(confint(full_model, level=0.975)) %>%
                    #na.omit() %>% 
                    dplyr::rename(lower_full = 1, upper_full = 2)
 
-# A
+# Calculate Width
 full_model_conf <- full_model_conf %>% 
                    #mutate(index=1:nrow(full_model_conf)) %>% 
                    #filter(index %in% (2:48)) %>% 
@@ -238,5 +248,11 @@ print(percent*100)
 
 ```
 
-## Conclusion: 97.87% of the simulated/repeated model's CI's are tighter/smaller. In other words, of the 47 columns left after removing NA's and the class column, 46 of the columns' confidence intervals from the repeated samples are smaller/tighter than those comapred to the CI's from the full model.
+## Conclusion: 100% of the simulated/repeated model's CI's are tighter/smaller. In other words, of the 47 columns left after removing NA's and the class column, 47 of the columns' confidence intervals from the repeated samples are smaller/tighter than those comapred to the CI's from the full model.
 
+## This tells us that when we repeat the model 1,000 times, the confidence in the best coefficients for each indepdent variable has increased (the range of our confidence intervals are smaller). Intuitively this makes sense because instead of just running 1 model and trying to discover the best coefficients, we have now done this 1,000 times and taken averages to make this determination. If we were to sample 10,000 times, the confidence intervals would be even tigheter
+
+```{r Review Means, echo=TRUE, warning=FALSE}
+
+
+```
