@@ -1,8 +1,11 @@
 ---
-title: "Assignment #1: German Credit"
+title: 'Assignment #1: German Credit'
 author: "Luke Schwenke"
 date: "`r Sys.Date()`"
-output: pdf_document
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
 ---
 
 ```{r setup, include=FALSE}
@@ -99,7 +102,6 @@ hist(my_df$ResidenceDuration,
      xlab = "Coefficients", main = "Coefficient Distribution - Residence Duration", col="lightblue")
 ```
 
-### Plot Interpretation: 
 
 ```{r coeff distributions - Housing Rent, echo=TRUE}
 hist(my_df$Housing.Rent, 
@@ -165,7 +167,7 @@ print(bind %>% na.omit())
 
 # Confidence Interval for Rep 1,000 Coefficients -------------------------------
 # Transposed dataframe of confidence intervals for each variable
-rep_conf <- data.frame(t(sapply(my_df[,1:63], function(x) Rmisc::CI(x, ci=0.975)))) #%>% na.omit()
+rep_conf <- data.frame(t(sapply(my_df[,1:63], function(x) Rmisc::CI(x, ci=0.95)))) #%>% na.omit()
 
 # Calculate Width
 # rep_conf$width <- (rep_conf$upper-rep_conf$lower)*sqrt(0.632)
@@ -259,12 +261,6 @@ sum(calc$tighter_CI_flag)
 
 ## Conclusion: 100% of the simulated/repeated model's CI's are tighter/smaller. In other words, of the 47 columns left after removing NA's and the class column, 47 of the columns' confidence intervals from the repeated samples are smaller/tighter than those comapred to the CI's from the full model.
 
-## This tells us that when we repeat the model 1,000 times, the confidence in the best coefficients for each independent variable has increased (the range of our confidence intervals are smaller). Intuitively this makes sense because instead of just running 1 model and trying to fit the best coefficients, we have now done this 1,000 times and taken averages to make this determination. If we were to sample 10,000 times, the confidence intervals would be even tighter.
+## This tells us that when we repeat the model 1,000 times, the confidence in the best coefficients for each independent variable has increased (the range of our confidence intervals are smaller). Intuitively this makes sense because instead of just running 1 model and trying to fit the best coefficients, we have now done this 1,000 times and taken averages to make this determination. If we were to sample 10,000 times, the confidence intervals would be even tighter. There should be convergence at some point (diminishing returns), but there will be an improvement event passed 1,000.
 
 ## In many instances, the repeated model's coefficient means were quite different from the single model we saved the coefficients for. The median difference between the repeated model mean and the corresponding saved model coefficients was 21.5%. This tells us that running just 1 model does not accurately capture what we can assume would be a "better" coefficient to use -- models should be run multiples time to find the optimal fit.
-
-
-```{r Review Means, echo=TRUE, warning=FALSE}
-
-
-```
