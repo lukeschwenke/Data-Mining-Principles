@@ -1,0 +1,243 @@
+---
+title: "Boston Cluster Analysis"
+author: "Luke Schwenke, Soheb Osmani, Ken Ma"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+  word_document: default
+  pdf_document: default
+---
+
+### Load Data and Packages
+
+```{r data, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+library(MASS)
+library(dplyr)
+library(ggplot2)
+library(mclust)
+library(cluster)
+library(ggplot2)
+library(factoextra)
+
+boston_data <- Boston
+
+```
+
+### Split data into Train/Test Sets
+
+```{r train and test, echo=TRUE, warning=FALSE}
+
+set.seed(777)
+
+# Create ID column for train/test splitting
+boston_data$id <- 1:nrow(boston_data)
+
+# Remove indicator and categorical columns
+boston_data <- boston_data %>% dplyr::select(-c(chas, rad))
+
+train <- boston_data %>% dplyr::sample_frac(0.7)
+test <- dplyr::anti_join(boston_data, train, by = 'id')
+train$id <- NULL
+test$id <- NULL
+
+train %>% head(5)
+
+```
+
+### Scaling the Test Set using Training Set Mean and Std. Dev.
+
+```{r train means, echo=TRUE, warning=FALSE}
+
+train_mean <- apply(train, 2, mean) #apply mean calculation to each column (2)
+train_sd <- apply(train, 2, sd)     #apply std. dev. calculation to each column (2)
+train_scale <- scale(train, center=train_mean, scale=train_sd) # scale train based on the calculated values
+test_scale <- scale(test, center=train_mean, scale=train_sd)   # scale test based on the calculated values
+
+```
+
+### Generate K-means Clustering Solution
+
+* kmeans(x, centers, iter.max, nstart)
+* x = numeric matrix of data
+* centers = number of clusters, k
+* iter.max = maximum iterations allowed (default 10)
+* nstart = number of random sets that should be chosen
+
+```{r k-means clustering, echo=TRUE, warning=FALSE}
+
+set.seed(777)
+
+# Initialize empty list with vectors to capture the rsq value and summations
+results <- list()
+results[["rsq"]] <- vector(mode = "numeric", length = length(2:10))
+results[["sumwithinss"]] <- vector(mode = "numeric", length = length(2:10))
+
+# Iterate through 2 up to 10 cluster groups for 100 random starts
+for (i in 2:10) {
+  result <- kmeans(train_scale, 
+                   centers = i,
+                   iter.max = 50,
+                   nstart = 100)
+  
+  # For each cluster, calculate the following, insert starting at 1 of the result list
+  results[["sumwithinss"]][i-1] <- sum(result$withinss)           # sum of squares in a cluster
+  results[["rsq"]][i-1] <- result$betweenss / result$totss        # between-cluster sum of squares / total sum of squares
+  results[["centers"]][[paste0("cluster_",i)]] <- result$centers  # cluster means
+  results[["centsizeers"]][[paste0("cluster_",i)]] <- result$size # observations in each cluster
+}
+
+# kmeans() function returns a list of components, including:
+# cluster: A vector of integers (from 1:k) indicating the cluster to which each point is allocated
+# centers: A matrix of cluster centers (cluster means)
+# totss: The total sum of squares (TSS), i.e ∑(xi−x¯)2
+# TSS measures the total variance in the data.
+# withinss: Vector of within-cluster sum of squares, one component per cluster
+# tot.withinss: Total within-cluster sum of squares, i.e. sum(withinss)
+# betweenss: The between-cluster sum of squares, i.e. totss−tot.withinss
+# size: The number of observations in each cluster
+
+```
+
+
+### Plot R-squared values for the Clusters & Scree Plot (finding best k)
+
+``` {r plots, echo=TRUE, warning=FALSE}
+
+set.seed(777)
+
+plot(2:10, results[["rsq"]], type="b", xlab="Number of clusters",
+     ylab="R-square", main = "R-square for 2-10 Clusters")
+
+plot(2:10, results[["sumwithinss"]], type="b", xlab="Number of clusters",
+     ylab="Within groups sum of squares", main = "Elbow Curve for 2-10 Clusters")
+
+# Group Sum of Square Errors
+round(diff(results[["sumwithinss"]]) / results[["sumwithinss"]][1:8],3)
+
+# Silhouette Plot
+testtry <- list()
+for (i in 2:10) {
+  km.res <- kmeans(train_scale, centers = i, iter.max = 50, nstart = 100)
+  ss <- silhouette(km.res$cluster, dist(train_scale))
+  testtry[i-1] <- mean(ss[, 3])
+}
+
+plot(2:10, testtry,
+      type = "b", pch = 19, frame = FALSE, 
+      xlab = "Number of clusters K",
+      ylab = "Average Silhouettes",
+      main = "Silhouette Plot")
+
+```
+
+### Set optimal k-means at 5 Clusters (k) and run on Test set
+
+``` {r optimum, echo=TRUE, warning=FALSE}
+
+set.seed(777)
+
+optimaltrain <- kmeans(train_scale, centers = 5, nstart = 100)
+
+# Use the centers (means) generated from the training set optimum
+testresult <- kmeans(test_scale, centers = optimaltrain$centers, nstart = 100)
+
+# Visualize the cluster results
+fviz_cluster(testresult, data = test_scale,
+             geom = "point",
+             ellipse.type = "convex", 
+             ggtheme = theme_bw(),
+             main = "K-means Clustering Output"
+             )
+
+```
+
+### Examine Size, VAF (R-squared), and Centroids for Train and Test Sets at the best K
+``` {r VAF, echo=TRUE, warning=FALSE}
+
+set.seed(777)
+
+# Cluster Sizes for Train and Test
+sizes <- data.frame(cluster_size_train = results$centsizeers$cluster_5 / sum(results$centsizeers$cluster_5),
+                    cluster_size_test = testresult$size / sum(testresult$size)) %>% mutate(difference = abs(cluster_size_train-cluster_size_test))
+sizes
+
+# VAF for Train and Test
+vaf <- data.frame(vaf_train = optimaltrain$betweenss/optimaltrain$totss,
+                  vaf_test = testresult$betweenss/testresult$totss)
+vaf
+
+# Centroids for Train and Test:
+centroids <- data.frame(centroids_train = optimaltrain$centers, 
+                        centroids_test = testresult$centers)
+
+# Compare the Centroid values more easily between train and test
+alt_view <- data.frame(cbind(optimaltrain$centers, testresult$centers)) #%>% select(sort(names(a)))
+alt_view <- alt_view %>% dplyr::select(sort(names(alt_view)))
+alt_view
+
+# Centroids of Test Only
+centroids[13:24]
+
+```
+### Interpretation:
+The best K-means model had an **R-squared (VAF) of 62% on the test set using 5 clusters**. We could have used a higher cluster amount but for ease of interprability we went with k=5. Additionally, the percent drop in the group sum of squares shows a marginal improvement after 5 clusters. The Silhoutte plot also revealed 5 is a strong choice. Below we have tagged each cluster based on their most influential coefficients. 
+
+### K-means Cluster Tags (test set):
+* Cluster 1 - Negative Tax, provides the most weight to full-value property tax rate
+* Cluster 2 - Positive Zoning, provides the most weight to the proportion of residential land zones for over 25k sqft.
+* Cluster 3 - Positive Median Home Value, provides the most weight to the median value of owner-occupied homes
+* Cluster 4 - Negative Black, provides the most weight to proportion of blacks by town
+* Cluster 5 - Positive Industry, provides the most weight to proportion of non-retails business acres per town
+
+Comparing the Train and Test set cluster sizes, they are fairly similiar which is an indicator of the model's strong performance when generalizing to unseen data. The highest difference in cluster sizes was ~0.19 between clusters #4 train and test. Comparing the centroid values between train and test sets also shows minimal differences, further indicating strong performance. **Overall, this k-means model demonstrates the ideal qualities of what we would expect from a clustering approach**.
+
+The k-means cluster visualization reveals it does a good job of segmenting the data, though there is some overlap between clusters 4 and 5. This tells us that 5 clusters also works well because it minimizes the overlap between clusters.
+
+
+# Gaussian Mixtures
+
+``` {r Gaussian, echo=TRUE, warning=FALSE}
+
+set.seed(777)
+options(scipen = 999) # Remove scientific notation
+
+# Run different models (2 clusters, ..., 10 clusters)
+gauss_mix <- mclust::Mclust(train_scale, G=2:10)
+gauss_mix$G
+gauss_mix$bic
+
+# Run the same but on unscaled data
+gauss_mix_unscaled <- mclust::Mclust(train, G=2:10)
+gauss_mix_unscaled$G
+gauss_mix_unscaled$bic
+
+# Save the best GMM
+best_gmm <- mclust::Mclust(train, G=6)
+summary(best_gmm)
+
+best_gmm$parameters[["mean"]]
+
+# Graph
+fviz_cluster(best_gmm, 
+             data=test, 
+             geom="point", 
+             ellipse.type='convex', 
+             main='Gaussian Mixture Model Output')
+
+```
+
+### Gaussian Mixed Models Summary
+After running 9 Gaussian mixture models ranging from 2 to 10 clusters, the **best performing model had 7 clusters using the scaled training data**. This best-performing Gaussian mixture model had a BIC of **-3,588.46**. When using the same model and parameters on the **un-scaled training data, the optimal cluster amount was 6**. The BIC was much more negative at **-19,607.04** which is to be expected to do the un-scaling. We did not tag the clusters for GMM like we did for k-means since they all appear to show similar results. These results are further discussed below. The plot has a lot of overlap across the 6 clusters.
+
+### Summary - Comparing the Best Gaussian Mixture Model with the Best K-Means Model
+
+Our best performing K-means model had a VAF of ~62% with the original 12 variables from the Boston dataset. The conclusion was that 5 clusters (k) were ideal for this model based on the results outlined above. This decision proved to be correct since the difference between the train and test set cluster sizes and centroids (values) were fairly minimal, indicating the k-means model results could generalize well. The interpretation of the k-means model showed the 5 different clusters prescribing varying weights across the clusters, but overall the most impact variables in clustering were: medv, black, zn, indus, and tax.
+
+Our best performing Gaussian Mixed model on **un-scaled training data had an optimal cluster amount of 6** with a **BIC of -19,607**. Across the 6 clusters, the variables black and tax consistently had the most impact.
+
+**Conclusion:** due to the k-means model having 5 clusters as the optimal k, a solid R-squared (VAF) and consistent results between the train and test set, and a plot indicating effective clustering/segmentation with minimal, **we conclude the k-means model makes more business sense to interpret**. The k-means model's 5 clusters overall themes reveal grouping is most effective on the boston dataset's Tax, Zoning, Home Value, Black, and Industry variables. As this is an unsupervised approach, this does not provide us a specific prediction, but tell us that these variables are useful for segmenting the general population of Boston. There are various applications the city could do with such data such as fiscal/economic programs, real estate and zoning adjustments, education policy implementation, and other sub-population targeted programs.
+
+
+
