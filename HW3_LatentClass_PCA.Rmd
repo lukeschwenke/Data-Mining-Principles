@@ -1,0 +1,289 @@
+---
+title: "Homework 3"
+author: "Luke Schwenke, Soheb Osmani, Ken Ma"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# **Part 1**
+
+## Load Data and Packages
+
+```{r data, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+library(poLCA)# for latent class analysis
+library(dplyr) # for data manipulationinstall.packages("package_name")
+library(MASS) 
+library(ggplot2) # for data visualization
+
+GermanCredit <- read.table("http://archive.ics.uci.edu/ml/machine-learning-databases/statlog/german/german.data", stringsAsFactors = TRUE)
+colnames(GermanCredit) <- c("CheckingAccountStatus", "Duration", "CreditHistory", "Purpose", "Amount",  "SavingsAccountBonds", "EmploymentDuration", "InstallmentRatePercentage",  "Personal",  "OtherDebtorsGuarantors", "ResidenceDuration", "Property",  "Age",  "OtherInstallmentPlans", "Housing", "NumberExistingCredits", "Job", "NumberPeopleMaintenance", "Telephone", "ForeignWorker", "Class")
+
+
+```
+
+## Subset Factor Data
+
+```{r factors, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+# This code creates a factor data set by retaining only the factor variables from the German Credit dataset
+factorData <- GermanCredit
+for (i in seq_along(names(GermanCredit))) {
+  if (class(GermanCredit[,i]) != "factor") {
+    factorData <- factorData[,-which(names(factorData) %in% names(GermanCredit)[i])]
+  }
+}
+
+# This code creates a subset of the data set containing only the relevant variables
+subsetData <- factorData[,c("CheckingAccountStatus","CreditHistory","SavingsAccountBonds",
+                            "EmploymentDuration","Personal","OtherDebtorsGuarantors","Property",
+                            "OtherInstallmentPlans","Housing","Job")]
+
+```
+
+## Split Data into Train/Test Sets
+
+```{r split, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+set.seed(777)
+subsetData$id <- 1:nrow(subsetData)
+train <- subsetData %>% dplyr::sample_frac(0.7)
+test <- dplyr::anti_join(subsetData, train, by = 'id')
+train$id <- NULL
+test$id <- NULL
+
+```
+
+## Perform Latent Class Analysis
+
+```{r LCA, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+set.seed(777)
+resultlist <- list()
+
+# This code creates the formula for the latent class analysis model
+train_f1 <- cbind(CheckingAccountStatus,CreditHistory,SavingsAccountBonds,
+                  EmploymentDuration,Personal,OtherDebtorsGuarantors,Property,
+                  OtherInstallmentPlans,Housing,Job)~1
+
+# This code performs latent class analysis for different number of clusters (2 to 6) and stores the results in the resultlist
+for (i in 2:6) {
+  results <- poLCA(train_f1, train,nclass=i,nrep=50,tol=.001,verbose=FALSE, graphs=FALSE)
+  resultlist[["AIC"]] <- cbind(resultlist[["AIC"]], results$aic)
+  resultlist[["BIC"]] <- cbind(resultlist[["BIC"]], results$bic)
+}
+
+```
+
+## Plot AIC and BIC
+
+```{r Plotting, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+# Plot the AIC values against the number of clusters (2 to 6) using a line plot.
+# x-axis label is "Number of clusters", y-axis label is "AIC", and the plot title is "AIC Elbow Curve"
+plot(2:6, resultlist[["AIC"]], type="b", xlab="Number of clusters", ylab="AIC", main = "AIC Elbow Curve")
+
+# Plot the BIC values against the number of clusters (2 to 6) using a line plot.
+# x-axis label is "Number of clusters", y-axis label is "BIC", and the plot title is "BIC Elbow Curve"
+plot(2:6, resultlist[["BIC"]], type="b", xlab="Number of clusters", ylab="BIC", main = "BIC Elbow Curve")
+
+```
+
+## Run LCA with Optimal Parameters
+
+```{r Optimal, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+set.seed(777)
+# Choose 4 as optimal number of clusters
+# Fit a latent class analysis model on the train data with 4 clusters and store the results in optimaltrain
+optimaltrain <- poLCA(train_f1, train,nclass=4,nrep=50,tol=.001,verbose=FALSE, graphs=TRUE)
+
+# Fit a latent class analysis model on the test data with 4 clusters and start probabilities from optimaltrain$probs
+# Store the results in optimaltest
+optimaltest <- poLCA(train_f1, test,nclass=4,probs.start = optimaltrain$probs,verbose=FALSE, graphs=TRUE)
+
+# Concatenate the probabilities of optimaltest and optimaltrain and sort by names
+problist <- c(optimaltest$probs, optimaltrain$probs)
+names(problist) <- c(paste0(names(problist)[1:10],"_Test"),paste0(names(problist)[11:20],"_Train"))
+problist <- problist[sort(names(problist))]
+
+# Compare probability list
+probcomplist <- lapply(optimaltest$probs, function(x) x <- x * NA)
+seqlist <- seq_along(optimaltest$probs) *2 -1
+
+for (i in seq_along(optimaltest$probs)) {
+    thisseq <- seqlist[i]
+    probcomplist[[names(optimaltest$probs)[i]]] <- problist[[thisseq+1]] - problist[[thisseq]]
+}
+
+probcompsummary <- summary(unlist(probcomplist))
+
+# Initialize an empty list pairlist
+pairlist <- list()
+
+# Loop through each variable in the train data
+for (i in seq_along(names(train))) {
+  thisvar <- names(train)[i]
+  # Extract the probabilities for thisvar from problist
+  thisprobpair <- problist[grepl(thisvar,names(problist))]
+  # Bind the probabilities for thisvar together and set the column names
+  pairlist[[thisvar]] <- cbind(thisprobpair[[1]],thisprobpair[[2]])
+  colnames(pairlist[[thisvar]]) <- c(paste0(colnames(pairlist[[thisvar]])[1:(ncol(pairlist[[thisvar]])/2)],"_Test"),
+                                     paste0(colnames(pairlist[[thisvar]])[(ncol(pairlist[[thisvar]])/2+1):ncol(pairlist[[thisvar]])],"_Train"))
+}
+
+# Sort the column names for each element in pairlist and return the updated pairlist
+
+pairlist <- lapply(pairlist, function(x) {
+  x <- x[,sort(colnames(x))]
+  return(x)
+})
+
+# Bind the probability matrix of optimaltest and optimaltrain together
+# and set the column names to "Test Set" and "Train Set"
+
+# Class Sizes for Train and Test
+classsize <- cbind(optimaltrain$predclass %>% table(),optimaltest$predclass %>% table())
+colnames(classsize) <- c("Train Set","Test Set")
+classsize
+
+# Class Sizes in Percentage for Train and Test
+classsize_pct <- cbind(round(prop.table(table(optimaltrain$predclass)),4)*100,
+                       round(prop.table(table(optimaltest$predclass)),4)*100)
+colnames(classsize_pct) <- c("Train Set","Test Set")
+classsize_pct
+
+# Conditional Probability Train vs Test Comparison Summary
+probcompsummary
+
+# Conditional Probabilities for Train and Test
+pairlist
+
+```
+
+## Part 1 Interpretation of Class Size, Conditional Probability and Marginal Distribution (Probability) Plot
+
+In terms of class size in percentage, both train and test set have similar percentages for the 4 classes examined. The largest percentage difference is from class #4 with 8.57% difference, while the smallest percentage difference is from class #3 with 0.81% difference.
+
+In terms of conditional probability, as shown in the summary table above, the difference between train and test set is also relatively stable, with value of 0 for both mean and median (i.e. no difference between train and test set). If we look at 25th and 75th percentile, the difference is around 3-4%. However, it is worth noting that the maximum and minimum difference can reach 20-40%.
+
+All in all, we would consider our model to be stable.
+
+Within the probability plot of the test set, we can examine each of the 4 class results to see how people are being grouped together through this analysis. Within these 4 groups, we can see the highest probability variables and their corresponding values that are making their probabilities high. These results can help us classify more naturally based on the data.
+
+**Class #1 (Self-Employed Homeowners)**: The most probable outcomes are Employment Duration value 1 (i.e. unemployed), Other Debtors Guarantors value 1 (i.e. none), Other Installment Plans value 3 (i.e. none), Housing value 2 (i.e. own) and Job value 4 (i.e. management/ self-employed/)
+- **Conclusion:** Class #1 seems to refer to the self-employed (or retired people) who own a house and do not have other loans obligations
+
+**Class #2 (Single Male Homeowners)**: The most probable outcomes are Housing value 2 (i.e. own), Other Installment Plans value 3 (i.e. none), Other Debtors Guarantors value 1 (i.e. none) and Personal value 3 (i.e. single male)
+- **Conclusion:** Class #2 seems to refer single men who are more well off since they do not have debt or installment plan and who own their own homes.
+
+**Class #3 (Single-Males who Live with Parents)**: The most probable outcomes are Property housing value 4 (i.e. no property), Other Debtors Guarantors value 1 (i.e. none), Personal value 3 (i.e. single male), and Housing value 3 (i.e. free)
+- **Conclusion**: Class #3 seems to refer to single men who do not own or rent and therefore most likely live with someone who does not charge them rent like their parents. Additionally they do not own property or have debt guarantor obligations.
+
+**Class #4 (Skilled Homeowners with Good Credit)**: The most probably outcomes are Job value 3 (i.e. skilled/official), Other Installment Plans value 3 (i.e. none), Housing value 2 (i.e. own), and Credit History value 3 (i.e. credits paid duly)
+- **Conclusion**: Class #4 seems to refer to skilled professionals who are homeowners with no installments plans and pay off their credit cards (debt)/
+
+# **Part 2**
+
+## Load Boston Dataset
+
+```{r load boston, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+Boston_data <- Boston
+set.seed(777)
+
+numData <- Boston_data
+
+for (i in seq_along(names(Boston_data))) {
+  if (class(Boston_data[,i]) != "numeric") {
+    numData <- numData[,-which(names(numData) %in% names(Boston_data)[i])]
+  }
+}
+```
+
+## Train & Test Split
+
+```{r test-split-2, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+numData$id <- 1:nrow(numData)
+train <- numData %>% dplyr::sample_frac(0.7)
+test <- dplyr::anti_join(numData, train, by = 'id')
+train$id <- NULL
+test$id <- NULL
+
+train_mean <- apply(train,2,mean)
+train_sd <- apply(train,2,sd)
+train_scale <- scale(train, center=train_mean, scale=train_sd)
+test_scale <- scale(test, center=train_mean, scale=train_sd)
+
+```
+
+## PCA & Scree Plot
+
+```{r pca1, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+pca_train <- prcomp(train_scale)
+
+# Calculate total variance explained by each principal component
+var_explained = pca_train$sdev^2 / sum(pca_train$sdev^2)
+
+# Create scree plot
+qplot(c(1:12), var_explained) + 
+  geom_line() + 
+  xlab("Principal Component") + 
+  ylab("Variance Explained") +
+  ggtitle("Scree Plot") +
+  xlim(0,12) +
+  scale_x_continuous(breaks=c(1:12))
+
+```
+
+## Components 1 & 2 Analysis - Biplot
+
+```{r pca2, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+#biplot(-pca_train$x,-pca_train$rotation, cex=0.6,col=c(4,6))
+
+biplot(pca_train,
+       col=c('blue', 'red'),
+       main='PCA Results',
+       xlab='First Component',
+       ylab='Second Component')
+```
+
+## Orthogonality and R-Squared
+
+```{r pca3, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+loadings <- pca_train$rotation
+loadings[,c(1,2)]
+
+# Orthogonal Loading
+round(pca_train$rotation %*% t(pca_train$rotation),2)
+
+# Orthogonal Scores
+round(cov(pca_train$x),2)
+
+### Test PCA
+pca_test <- predict(pca_train, newdata=test_scale)
+
+manual.test <- pca_test %*% t(pca_train$rotation)
+
+### Training Model R^2
+cor(as.vector(train_scale), as.vector(pca_train$x[,1:2] %*%
+t(pca_train$rotation)[1:2,]))^2
+
+### Testing Model R^2
+cor(as.vector(test_scale), as.vector(pca_test[,1:2] %*% 
+t(pca_train$rotation)[1:2,]))^2
+```
+
+## Part 2 Interpretation:
+
+Using the elbow of the scree plot, we determined that two principal components were sufficient for our analysis. 
+
+We then visualized these two components using a biplot and analyzed the loadings to determine which variables were the most important contributors to each component. 
+
+We found that the variables "indus" and "nox" were the most significant contributors to the first component, and the variables "rm" and "medv" were the most significant contributors to the second component.
+
+If we break variables down into quadrants, 3 variables (i.e. "lstat", "crim" and "ptratio") have both positive correlation towards the first and second component, while 3 variables (i.e. "rm", "black" and "medv") have both negative correlation towards the two components. Other variables have either one positive and one negative correlation towards the two components.
+
+To quantify the degree to which these components capture the variability in our train and test data, we calculated the R-squared values. 
+
+These values indicate that the first two principal components explain approximately 62.4% and 40.8% of the variability in the train_scale and test_scale data, respectively.
