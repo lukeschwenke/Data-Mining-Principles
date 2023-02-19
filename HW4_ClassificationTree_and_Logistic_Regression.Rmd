@@ -1,0 +1,194 @@
+---
+title: "Data Mining Principles - Homework #4"
+author: "Luke Schwenke, Soheb Osmani, Ken Ma"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# Part 1 - Logistic Regression
+
+```{r packages, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+library(mltools)
+library(data.table)
+library(dplyr)
+library(gains)
+library(data.table)
+library(MASS)
+library(AUC)
+library(rpart)
+library(caret)
+
+set.seed(101)
+
+```
+
+**Note:** the data has been pre-processed, loaded, and a **Step AIC model** has been run. Because the Step AIC model takes hours to run we have commented this section out and just loaded the workspace (.rdata) file. The Step AIC model was used to select the most meaningful coefficients after dummy-encoding non-ordered categorical variables.
+
+``` {r prep, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+# data <- read.csv('diabetes_data_preprocess.csv', header = TRUE)
+# data <- data[-which(data$gender %in% "Unknown/Invalid"),]
+# mode(data$gender) <- "integer"
+# 
+# data$id <- 1:nrow(data)
+# train <- data %>% dplyr::sample_frac(0.7)
+# test <- dplyr::anti_join(data, train, by = 'id')
+# train$id <- NULL
+# test$id <- NULL
+# 
+# train_model <- glm(readmitted~., data=train, family=binomial(link=logit))
+# 
+# train_summary <- summary(train_model)
+# 
+# step_model <- stepAIC(train_model,direction="both", steps = 10)
+
+load('DM_HW4_STEP_MODEL.rdata')
+
+```
+
+## Construct GLM Model
+``` {r glm, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+# Set the expression to be the best terms from the Step Model output
+expr <- attributes(step_model$model)$terms
+
+# Create a new GLM model using the best terms
+new_glm <- glm(expr, data=train, family=binomial(link=logit))
+
+#### Confusion Matrix for Train
+xp=new_glm$fitted.values
+xp[xp>=0.5]=1
+xp[xp<0.5]=0
+print('Confusion Matrices - Threshold = 0.5, Training Set')
+table(train$readmitted, xp)
+cm <- confusionMatrix(table(train$readmitted,xp))
+cm$overall
+cm$byClass[c("Sensitivity", "Specificity")]
+round(prop.table(table(train$readmitted,xp),1),2)
+round(prop.table(table(train$readmitted,xp),2),2)
+
+#### Confusion Matrix for Train with different threshold
+xp=new_glm$fitted.values
+xp[xp>=0.33]=1
+xp[xp<0.33]=0
+print('Confusion Matrices - Threshold = 0.33, Training Set')
+table(train$readmitted,xp)
+cm <- confusionMatrix(table(train$readmitted,xp))
+cm$overall
+cm$byClass[c("Sensitivity", "Specificity")]
+round(prop.table(table(train$readmitted,xp),1),2)
+round(prop.table(table(train$readmitted,xp),2),2)
+
+#### Confusion Matrix for Test
+test_predict=predict(new_glm, newdata=test,type="response")
+test_xp <- test_predict
+test_xp[test_xp>=0.5] <- 1
+test_xp[test_xp<0.5] <- 0
+print('Confusion Matrices - Threshold = 0.5, Test Set')
+table(test$readmitted,test_xp)
+cm <- confusionMatrix(table(test$readmitted,test_xp))
+cm$overall
+cm$byClass[c("Sensitivity", "Specificity")]
+round(prop.table(table(test$readmitted,test_xp),1),2)
+round(prop.table(table(test$readmitted,test_xp),2),2)
+
+### Confusion Matrix for Test with a new threshold of 33%
+test_xp <- test_predict
+test_xp[test_xp>=0.33] <- 1
+test_xp[test_xp<0.33] <- 0
+print('Confusion Matrices - Threshold = 0.33, Test Set')
+table(test$readmitted,test_xp)
+cm <- confusionMatrix(table(test$readmitted,test_xp))
+cm$overall
+cm$byClass[c("Sensitivity", "Specificity")]
+round(prop.table(table(test$readmitted,test_xp),1),2)
+round(prop.table(table(test$readmitted,test_xp),2),2)
+```
+
+## Gains & ROC
+
+``` {r gains_roc, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+## Gains chart
+gains(as.numeric(test$readmitted)-1,test_predict,10)
+plot(gains(as.numeric(test$readmitted)-1,test_predict,10),ylim = c(-1,1))
+
+## ROC 
+plot(roc(new_glm$fitted.values,factor(train$readmitted)))
+
+
+```
+
+### **Part 1 - Classification Tree Summary:**
+For the train set, the confusion matrices show that with a threshold of 0.5, there was an overall accuracy of ~62.7%, with a sensitivity of ~63.5% and a specificity of ~59.5%. When considering the proportions of actual versus predicted values, the model correctly identified 59% of the readmissions, but also misclassified 41% of the non-readmissions. For the training set, with a threshold of 0.33, the model correctly identifies ~75.5% of the positive cases (sensitivity) but has a lower specificity of ~45.8%, meaning that many of the positive predictions are false positives. This suggests that the model is more likely to predict a patient as readmitted even if they are not actually readmitted. The overall accuracy is also lower at ~52.9%.
+
+For the test set, the confusion matrices show that with a threshold of 0.5, there was an overall accuracy of ~62.7%, with a sensitivity of ~63.9% and a specificity of ~57.2%. When considering the proportions of actual versus predicted values, the model correctly identified 57% of the readmissions, but also misclassified 43% of the non-readmissions. with a threshold of 0.33 for the test set, the model has a higher sensitivity of ~75.2% and lower specificity of ~44.7%. The overall accuracy is also lower at ~51.9%.Overall, The model with a threshold of 0.33 is more sensitive to detecting true positive cases, but at the cost of lower precision and higher false positive predictions. 
+
+In this Gains chart, we can see that the model performs better than random for most of the population, with a lift index of 65% at the 10% depth increasing to a lift index of 137% at the 100% depth.  Overall, the gains chart suggests that the model is performing well, capturing a significant proportion of the responses with a relatively small percentage of the population considered. The ROC curve also shows that the model performs better than random. 
+
+# Part 2 - Classification Tree
+
+## Train Set
+``` {r train, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+#### TRAIN SET
+train$readmitted <- factor(train$readmitted)
+x <- rpart(expr, train, control=rpart.control(cp=0, minsplit=30, xval=10, maxsurrogate=0))
+
+# Print cost-complexity parameters and then cross-val based on cp values and performance
+printcp(x)
+plotcp(x, minline = TRUE) 
+
+# Find lowest xerror value
+cpthreshold <- x$cptable[,"CP"][which(x$cptable[,"xerror"] %in% min(x$cptable[,"xerror"]))]
+
+# Build pruned tree and make prediction using the cp with lowest error
+tree<-rpart(expr, train, control = rpart.control(cp=cpthreshold[[1]]))
+
+# Confusion Matrix
+table_train <- table(train$readmitted, predict(tree, type="class"))
+table_train
+
+```
+
+## Test Set
+``` {r compare, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+#### TEST SET
+test_preds <- predict(tree, test[,-which(colnames(test) %in% "readmitted")], type = "class")
+table_test <- table(test$readmitted, test_preds)
+print('The below 2 confusion matrices are used to compare the Classification Tree Train and Test set results')
+table_train
+table_test
+
+#Num_interactions 
+num_interactions <- sum(tree$frame$var != "<leaf>")
+print(num_interactions)
+
+# Accuracy Comparison
+sum(diag(table_train))/sum(table_train)
+sum(diag(table_test))/sum(table_test)
+
+# COMPARE LOGISTIC & CLASSIFICATION TREE CONFUSION MATRICES - TEST SETS
+print('The below 2 confusion matrices are used to compare the Classification Tree Test and Logistic Reg. Test set results')
+round(prop.table(table(test$readmitted, test_xp),2),2)
+round(prop.table(table(test$readmitted, test_preds),2),2)
+
+#summary(tree)
+
+# Accuracy Comparison
+sum(diag(table(test$readmitted, test_xp)))/sum(table(test$readmitted, test_xp))
+sum(diag(table(test$readmitted, test_preds)))/sum(table(test$readmitted, test_preds))
+
+```
+
+### **Part 2 - Classification Tree Summary:**
+* Interaction depth is the number of splits in a tree, the number of interactions is 44 for this tree. This tree was constructed based on 58 predictor variables and the 5 most important variables were number of inpatient visits, discharge disposition id, number of diagnoses, number of outpatient visits, and diabetes meds.
+
+* The results between the train and test set for the classification tree are stable. Taking a look at the accuracy specifically, they only differ by 1%. 
+
+* When comparing the test sets between the Classification Tree and Logistic Regression, **the Classification Tree performs better with an accuracy of 62.4% compared to 52%**.
+
+
