@@ -1,0 +1,282 @@
+---
+title: "Data Mining Principles - Homework #5"
+author: "Luke Schwenke, Soheb Osmani, Ken Ma"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# **Part 1 - Cluster-wise Regression**
+
+### Load Data
+```{r block1, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+library(caret)
+library(ggplot2)
+library(dplyr)
+set.seed(777)
+
+data(GermanCredit)
+
+```
+
+### Train & Test Subsetting
+```{r block2, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+regdata <- GermanCredit
+regdata <- regdata[,-which(colnames(regdata) %in% c("X","Class"))]
+
+regdata$id <- 1:nrow(regdata)
+train <- regdata %>% dplyr::sample_frac(0.7)
+test <- dplyr::anti_join(regdata, train, by = 'id')
+train$id <- NULL
+test$id <- NULL
+```
+
+### Import Cluster-wise Functions & Run on Train
+```{r block3, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+source('clustreg.R')
+source('clustreg_predict.R')
+
+# Data Scaling
+df <- train %>% mutate_all(~(scale(.) %>% as.vector))
+
+# Subset to required variables
+df <- df[,c("Amount","Duration","InstallmentRatePercentage","ResidenceDuration","Age","NumberExistingCredits","NumberPeopleMaintenance")]
+
+# Perform cluster-wise regression 3 times with varying parameters
+clustreg_1 <- clustreg(df,1,1,777,1)
+clustreg_2 <- clustreg(df,2,2,777,10)
+clustreg_3 <- clustreg(df,3,2,777,10)
+
+# Plot R-squared as a function of the number of clusters
+plot(c(1,2,3),c(clustreg_1$rsq.best,clustreg_2$rsq.best,clustreg_3$rsq.best),
+      ylim=c(0,1),
+      type="l",
+      col=4,
+      main="VAF Plot for Cars Data: Cluster-wise Regression", 
+      ylab="Variance Accounted For",
+      xlab="Number of Clusters")
+
+```
+
+### Run on Test
+
+```{r block4, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+### Test Prediction ###
+df_test <- test %>% mutate_all(~(scale(.) %>% as.vector))
+df_test <- df_test[,c("Amount","Duration","InstallmentRatePercentage","ResidenceDuration","Age","NumberExistingCredits","NumberPeopleMaintenance")]
+
+testreg_1 <- clustreg.predict(clustreg_1,df_test)
+testreg_2 <- clustreg.predict(clustreg_2,df_test)
+testreg_3 <- clustreg.predict(clustreg_3,df_test)
+
+```
+
+### Comparing Models
+```{r block5, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+rsqtable <- matrix(data = round(c(clustreg_1$rsq.best,clustreg_2$rsq.best,clustreg_3$rsq.best,
+                            testreg_1$rsq,testreg_2$rsq,testreg_3$rsq),3),
+                   nrow = 3,
+                   ncol = 2,
+                   dimnames = list(c("1_Cluster","2_Clusters","3_Clusters"),c("Train R^2", "Test R^2")))
+
+#(Train R square – Holdout R square)/ Train R square
+rsqchg <- (rsqtable[,1] - rsqtable[,2]) / rsqtable[,1]
+
+rsqtable <- round(cbind(rsqtable,rsqchg),3)
+colnames(rsqtable)[3] <- "% decrease in R^2"
+
+# Compare the R-squared outputs
+rsqtable
+
+# Compare clusters
+round(prop.table(table((testreg_2$cluster))),3)
+round(prop.table(table((testreg_3$cluster))),3)
+
+# Compare the F-tests
+(clustreg_1$rsq.best/6) / ((1-clustreg_1$rsq.best)/693)
+(clustreg_2$rsq.best/6) / ((1-clustreg_2$rsq.best)/693)
+(clustreg_3$rsq.best/6) / ((1-clustreg_3$rsq.best)/693)
+
+```
+
+### **Interpretation:**
+
+* The model that is most stable is the 2-cluster model since the train to test R-squared value only decreases 5.5%, but the 3-cluster model is not far off at 5.9%. The 3-cluster model performs best on the test/holdout set with a Test R-squared value of 85.5%.  The 1-cluster model performed much worse overall with a Train R-squared value of 51.3% and a decrease of almost 10% on the holdout set.
+
+* **The best performing model appears to be the 3rd model that has 3 clusters**. This model had the highest F-statistic value  and also the highest train and test R-squared values. These results indicate the 3 cluster model best fits the data and explains the most variance in the Amount (dependent) variable. 
+
+```{r block6, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+clustreg_3$results
+
+amountcluster <- cbind(summary(clustreg_3$data$Amount[which(clustreg_3$cluster %in% 1)]),
+                       summary(clustreg_3$data$Amount[which(clustreg_3$cluster %in% 2)]),
+                       summary(clustreg_3$data$Amount[which(clustreg_3$cluster %in% 3)]))
+
+colnames(amountcluster) <- c("Cluster 1","Cluster 2","Cluster 3")
+
+# Loan Amount Statistics by Cluster Groups
+round(amountcluster,3)
+
+```
+
+### **Summary**
+
+* From the training plot of R-squared values above, there is a sharp increase in variance explained approaching 2 clusters. This variance explained continues to increase, though more slowly, as it approaches 3 clusters. From the graph we would also conclude 3-clusters is best based on variance explained.
+
+* For Cluster 1, all regression coefficients are statistically significant. Variables of Duration, Residence Duration have recorded positive coefficient, while other variables have negative coefficients. Within Cluster 1, the average loan amount is much higher than that of other clusters. With all these information, we can deduce that this cluster belongs to a group of borrowers with a large loan, long duration loans, low loan interest rate, having lived in their residence for long time, having low number of existing credit lines and large number of people being liable to provide maintenance for.
+
+* For Cluster 2, the regression coefficients are statistically significant for variables Duration (positive coefficient), Installment Rate Percentage (negative coefficient) and Number People Maintenance (slightly positive coefficient). Within Cluster 2, the average loan amount is much lower than that of other clusters. With all these information, we can deduce that this cluster belongs to a group of borrowers with a small loan, low loan duration and high loan installment interest rate.
+
+* For Cluster 3, most regression coefficients are statistically significant, except Number of Existing Credits variable. However, only a few regression coefficients' values are not insignificant, such as Duration and Installment Rate Percentage. The average loan amount for this cluster is slightly higher than average. With all these information, we can deduce that this cluster belongs to a group of borrowers with moderate amount of loan, relatively long duration and low loan interest rate.
+
+# **Part 2 - Linear Discriminant Analysis (LDA) & Quadratic Discriminant Analysis (QDA)**
+
+### Load Data
+```{r block7, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+diabetes <- read.table('diabetes_preprocessed_nodummies-1.csv', stringsAsFactors = TRUE, 
+                                                                header = TRUE, sep = ",")
+set.seed(101)
+library(MASS)
+
+```
+
+### Train & Test Split
+```{r block8, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+diabetes <- read.csv("diabetes_preprocessed_nodummies-1.csv", stringsAsFactors = TRUE)
+train_size <- floor(0.7 * nrow(diabetes))
+train_ind <- sample(seq_len(nrow(diabetes)), size = train_size)
+train <- diabetes[train_ind, ]
+test <- diabetes[-train_ind, ]
+
+```
+
+### LDA & QDA Implementation
+```{r block82, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+# remove variables that cause collinearity issue (rank deficiency)
+
+lda_train <- lda(readmitted~.-chlorpropamide,data=train, CV=FALSE)
+
+qda_train <- qda(readmitted~.-chlorpropamide-miglitol-troglitazone-glyburide.metformin-metformin.rosiglitazone, data=train,CV=FALSE)
+
+```
+
+
+### Confusion Matrices
+```{r block9, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+library(caret)
+# Use class output rather than probabilities
+
+### LDA Train 
+lda_train_confusion <- caret::confusionMatrix(table(train$readmitted, predict(lda_train)$class))
+lda_train_confusion
+
+### LDA Test 
+lda_test_confusion <- caret::confusionMatrix(table(test$readmitted,predict(lda_train,test)$class))
+lda_test_confusion
+
+# ---------------
+
+### QDA Train
+qda_train_confusion <- caret::confusionMatrix(table(train$readmitted,predict(qda_train)$class))
+qda_train_confusion
+
+### QDA Test
+qda_test_confusion <- caret::confusionMatrix(table(test$readmitted,predict(qda_train,test)$class))
+qda_test_confusion
+
+```
+
+### F1 Scores
+```{r block10, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+library(MLmetrics)
+
+### LDA Train
+lda_train_f1 <- F1_Score(train$readmitted, predict(lda_train)$class)
+lda_train_f1 # 74.5%
+
+### LDA Test
+lda_test_f1 <- F1_Score(test$readmitted, predict(lda_train,test)$class)
+lda_test_f1 # 74.3%
+
+# ---------------
+
+### QDA Train
+qda_train_f1 <- F1_Score(train$readmitted, predict(qda_train)$class)
+qda_train_f1 # 73.4%
+
+### QDA Test
+qda_test_f1 <- F1_Score(test$readmitted, predict(qda_train,test)$class)
+qda_test_f1 # 72.6%
+
+```
+
+### Summaries
+```{r block11, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+### OVERALL SUMMARY TABLE
+cols = c('LDA accuracy',
+         'QDA accuracy',
+         'LDA precision',
+         'QDA precision',
+         'LDA recall',
+         'QDA recall',
+         'LDA F1-score',
+         'QDA F1-score')
+
+# Accuracy
+acc_lda_train <- as.numeric(lda_train_confusion$overall['Accuracy'][1])
+acc_lda_test <- as.numeric(lda_test_confusion$overall['Accuracy'][1])
+
+acc_qda_train <- as.numeric(qda_train_confusion$overall['Accuracy'][1])
+acc_qda_test <- as.numeric(qda_test_confusion$overall['Accuracy'][1])
+
+# Precision
+prec_lda_train <- as.numeric(lda_train_confusion$byClass['Precision'][1])
+prec_lda_test <- as.numeric(lda_test_confusion$byClass['Precision'][1])
+
+prec_qda_train <- as.numeric(qda_train_confusion$byClass['Precision'][1])
+prec_qda_test <- as.numeric(qda_test_confusion$byClass['Precision'][1])
+
+# Recall
+recal_lda_train <- as.numeric(lda_train_confusion$byClass['Recall'][1])
+recal_lda_test <- as.numeric(lda_test_confusion$byClass['Recall'][1])
+
+recal_qda_train <- as.numeric(qda_train_confusion$byClass['Recall'][1])
+recal_qda_test <- as.numeric(qda_test_confusion$byClass['Recall'][1])
+
+summary_df = as.data.frame(cbind(
+                         rbind(acc_lda_test,acc_lda_train),
+                         rbind(acc_qda_test,acc_qda_train),
+                         rbind(prec_lda_test,prec_lda_train),
+                         rbind(prec_qda_test,prec_qda_train),
+                         rbind(recal_lda_test,recal_lda_train),
+                         rbind(recal_qda_test,recal_qda_train),
+                         rbind(lda_test_f1,lda_train_f1),
+                         rbind(qda_test_f1,qda_train_f1)),
+                         row.names=c('Test','Train'))
+
+colnames(summary_df) <- cols
+summary_df
+
+```
+
+### Interpreation: 
+Comparing the LDA and QDA models, these are the winning models for each metric:
+
+*Winning Model:*
+
+* Accuracy - LDA
+* Precision - LDA
+* Recall - QDA (slightly)
+* F1-score - LDA
+
+From these results we can conclude the **Linear Discriminant Analysis (LDA) model performs better** than the Quadratic Discriminant Analysis (QDA) model. This model makes the best predictions overall. In a binary classification problem, precision is the fraction of true positives among all positive predictions, and recall is the fraction of true positives among all actual positive cases. For Precision, the LDA model performs better but on Recall the QDA slightly performs better. For this reason, the combination metric with the F1-score can be used as it represents the balance / equal weight between these 2 measures. **The F1-score shows LDA is the winning model.** Both models were very stable comparing their train to test results (only slight decreases in performance on the test sets).
+
+Overall we are happy with these results as all the metrics are relatively high, not just the accuracy. The F1-score of 74% tells us that even on an imbalanced dataset, the model is able to make good predictions.
