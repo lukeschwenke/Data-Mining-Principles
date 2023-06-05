@@ -138,8 +138,8 @@ round(amountcluster,3)
 ### Load Data
 ```{r block7, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
 
-diabetes <- read.table('diabetes_preprocessed_nodummies-1.csv', stringsAsFactors = TRUE, 
-                                                                header = TRUE, sep = ",")
+diabetes <- read.csv("diabetes_preprocessed_nodummies-1.csv", stringsAsFactors = TRUE)#, 
+                                                                #header = TRUE, sep = ",")
 set.seed(101)
 library(MASS)
 

@@ -1,0 +1,402 @@
+---
+title: "Data Mining Principles - Final Project - Fraud Detection"
+author: "Luke Schwenke, Soheb Osmani, Ken Ma"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+The following R Markdown covers different data mining applications in an effort to predict vehicle insurance fraud for a car insurance provider. We used the following techniques:
+
+**Supervised Models Used:** GLM, GLM with Stepwise Regression, Classification Tree, SVM, Naive Bayes
+**Unsupervised Algorithm Used**: t-SNE
+
+A final ensemble model was used to combine the supervised models to form a majority-vote fraud/not-fraud prediction
+
+```{r b1, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+# Load necessary packages
+library(tidyverse)
+library(MASS)
+library(MLmetrics)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(mclust)
+library(Rtsne)
+library(ggplot2)
+library(e1071)
+library(naivebayes)
+library(randomForest)
+library(pROC)
+library(PRROC)
+
+set.seed(777)
+
+# Load insurance fraud dataset, setting strings to factors
+insurance_fraud <- read.csv("fraud.csv", stringsAsFactors = TRUE)
+
+# Drop columns that do not provide value
+insurance_fraud <- insurance_fraud %>% dplyr::select(-PolicyNumber, -RepNumber, -Age)
+
+# Print the first 10 lines of dataset
+head(insurance_fraud, n = 10)
+
+c(names(insurance_fraud))
+```
+
+# **Examine Dataset**
+
+```{r b2, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+# Examine structure of dataset
+str(insurance_fraud)
+
+# Check dimensions of dataset
+dim(insurance_fraud)
+
+# Check data types of variables
+sapply(insurance_fraud, class)
+
+# Identify missing values and count them
+sapply(insurance_fraud, function(x) sum(is.na(x)))
+
+# Use mutate_if() to address outliers in only numeric columns
+#insurance_fraud <- insurance_fraud %>% mutate_if(is.numeric, funs(replace(., . > quantile(., 0.75) + 1.5*IQR(.) | . < quantile(., 0.25) - 1.5*IQR(.), NA)))
+
+# Create copy 
+df <- insurance_fraud
+table(df$FraudFound_P)
+
+# Remove problems row with 0 as MonthClaim and DayOfWeekClaimed and PolicyType of Sport
+df <- df %>% filter(DayOfWeekClaimed!=0 & MonthClaimed!=0)
+df <- df %>% filter(PolicyType!="Sport - Liability")
+
+```
+
+# **Train-Test-Split**
+
+```{r b3, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+df$id <- 1:nrow(df)
+train <- df %>% dplyr::sample_frac(0.8)
+test <- dplyr::anti_join(df, train, by = 'id')
+train$id <- NULL
+test$id <- NULL
+
+# Set dependent variable to factor
+train$FraudFound_P <- as.factor(train$FraudFound_P)
+test$FraudFound_P <- as.factor(test$FraudFound_P)
+
+# Create Confusion Matrix Drawer Function
+draw_confusion_matrix <- function(cm) {
+
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('CONFUSION MATRIX', cex.main=2)
+
+  # create the matrix 
+  rect(150, 430, 240, 370, col='#3F97D0')
+  text(195, 435, '0 - Not Fraud', cex=1.2)
+  rect(250, 430, 340, 370, col='#F7AD50')
+  text(295, 435, '1 - Fraud', cex=1.2)
+  text(125, 370, 'Predicted', cex=1.3, srt=90, font=2)
+  text(245, 450, 'Actual', cex=1.3, font=2)
+  rect(150, 305, 240, 365, col='#F7AD50')
+  rect(250, 305, 340, 365, col='#3F97D0')
+  text(140, 400, '0 - Not Fraud', cex=1.2, srt=90)
+  text(140, 335, '1 - Fraud', cex=1.2, srt=90)
+
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[1], cex=1.6, font=2, col='white')
+  text(195, 335, res[2], cex=1.6, font=2, col='white')
+  text(295, 400, res[3], cex=1.6, font=2, col='white')
+  text(295, 335, res[4], cex=1.6, font=2, col='white')
+
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS", xaxt='n', yaxt='n')
+  text(10, 85, names(cm$byClass[11]), cex=1.2, font=2)
+  text(10, 70, round(as.numeric(cm$byClass[11]), 3), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=2)
+  text(30, 70, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=2)
+  text(50, 70, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=2)
+  text(70, 70, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=2)
+  text(90, 70, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+
+  # add in the accuracy information 
+  text(30, 35, names(cm$overall[1]), cex=1.5, font=2)
+  text(30, 20, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+  text(70, 35, names(cm$overall[2]), cex=1.5, font=2)
+  text(70, 20, round(as.numeric(cm$overall[2]), 3), cex=1.4)
+}  
+
+```
+
+# **Construct base GLM Model with All Variables**
+
+```{r b4, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+set.seed(777)
+
+# Set threshold for what is fraud (1) and not fraud (0)
+thresh = 0.5
+
+############# Baseline Logistic Regression on ALL variables ############# 
+
+# Construct baseline model and print the summary
+base_log_reg <- glm(FraudFound_P ~ ., data=train ,family = binomial(link = "logit"))
+
+# Get the fitted values (predictions) on the train set
+base_vals = base_log_reg$fitted.values
+
+# Assign 1 or 0 based on the threshold set above
+base_vals[base_vals>=thresh]=1
+base_vals[base_vals<thresh]=0
+
+# Print the confusion matrix and summary values
+conf1_train <- caret::confusionMatrix(table(train$FraudFound_P, base_vals))
+conf1_train
+
+# Print the F1 score -- this is a good metric to use in an imbalanced dataset
+base_f1_score_train <- MLmetrics::F1_Score(train$FraudFound_P,  base_vals)
+base_f1_score_train # 97% F1-score
+
+# How does it do on the test set?
+# Remove categories that don't exist in train set
+test <- test %>% filter(Make != 'Ferrari')
+test <- test %>% filter(Make != 'Lexus')
+test <- test %>% filter(NumberOfCars != 'more than 8')
+
+test_vals = predict(base_log_reg, newdata=test, type="response")
+test_xp <- test_vals
+test_xp[test_xp>=0.5] <- 1
+test_xp[test_xp<0.5] <- 0
+
+log_all_vars_pred <- test_xp
+
+conf1_test <- caret::confusionMatrix(table(test$FraudFound_P, test_xp))
+conf1_test
+
+base_f1_score_test <- MLmetrics::F1_Score(test$FraudFound_P, test_xp)
+base_f1_score_test
+
+# Balanced Accuracy
+print(paste("Test GLM Balanced Accuracy:", as.numeric(caret::confusionMatrix(table(test_xp, test$FraudFound_P))$byClass['Balanced Accuracy'][1])))
+
+# Draw Pretty Confusion Matrix
+draw_confusion_matrix(caret::confusionMatrix(table(test_xp, test$FraudFound_P)))
+
+```
+
+
+
+### **Baseline GLM All Variables Summary:** the baseline GLM model with ALL variables **appears** does a great job making predictions with an **F1-score of 94%. The balanced accuracy however returns a low score of 50%**. Balanced accuracy is a performance metric used to evaluate the performance of a classification model when the classes are imbalanced. It is the average of the sensitivity (true positive rate) and specificity (true negative rate) of the model, and is calculated as: balanced accuracy = (sensitivity + specificity) / 2. We will keep iterating and use this baseline model as a comparison.
+
+# **Stepwise Regression**
+
+```{r b5, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+# Use Stepwise Regression to find the best parameters to keep. Since this takes a while to return, we have commented out the code that runs the stepAIC function and loaded the .RData object, see here:
+
+#step_model <- stepAIC(base_log_reg, direction="both", steps = 10)
+#save(step_model, file = "step_model_final_project_updated.RData")
+load("step_model_final_project_updated.RData")
+
+# Set the expression to be the best terms from the Step Model output
+expr <- attributes(step_model$model)$terms
+
+set.seed(777)
+
+# Set weights
+weights <- ifelse(train$FraudFound_P == 0, 0.1, 0.5)
+
+# Create a new GLM model using the best terms
+smaller_glm <- glm(expr, data=train, family=binomial(link=logit), weights = weights)
+
+# Get predictions / fitted values from the train set
+glm_train_results=smaller_glm$fitted.values
+
+# Set 1 and 0
+glm_train_results[glm_train_results>=0.5]=1
+glm_train_results[glm_train_results<0.5]=0
+
+# Train Results
+caret::confusionMatrix(table(glm_train_results,train$FraudFound_P))
+MLmetrics::F1_Score(train$FraudFound_P, glm_train_results)
+
+# Test Results
+glm_test_results <- predict(smaller_glm, test, type="response")
+
+# Set 1 and 0
+glm_test_results[glm_test_results>=0.5]=1
+glm_test_results[glm_test_results<0.5]=0
+
+glm_test_results <- as.factor(glm_test_results)
+log_step_pred <- glm_test_results
+
+# Generate confusion matrix
+caret::confusionMatrix(table(glm_test_results, test$FraudFound_P))
+
+# Generate F1-score
+print(paste("GLM Step Test F1-Score:", MLmetrics::F1_Score(glm_test_results, test$FraudFound_P)))
+
+# Draw Pretty Confusion Matrix
+draw_confusion_matrix(caret::confusionMatrix(table(glm_test_results, test$FraudFound_P)))
+
+```
+
+### **GLM with Stepwise Summary:** Comparing this model to the baseline GLM with all variables, the **F1-score has gone down to 94%** same whereas the **Balanced Accuracy has gone up to 59%**. This indicates all variables are kept in the model will return a better result if we are using Balanced Accuracy as our primary metric.
+
+# **Classification Tree**
+
+```{r b6, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+# Create weights vector
+weights <- ifelse(train$FraudFound_P == 0, 0.1, 0.5)
+
+# Build classification tree model with weights
+fraud_tree <- rpart(FraudFound_P ~ ., data = train, method = "class", weights = weights)
+
+# Plot classification tree
+rpart.plot(fraud_tree, type = 5, extra = 1)
+
+# Predict on training and testing datasets
+train_preds <- predict(fraud_tree, train, type = "class")
+test_preds <- predict(fraud_tree, test, type = "class")
+tree_pred <- test_preds
+
+# Evaluate performance on training and testing datasets
+train_conf_mat <- table(train$FraudFound_P, train_preds)
+test_conf_mat <- table(test$FraudFound_P, test_preds)
+
+train_acc <- sum(diag(train_conf_mat)) / sum(train_conf_mat)
+test_acc <- sum(diag(test_conf_mat)) / sum(test_conf_mat)
+
+train_f1 <- MLmetrics::F1_Score(train$FraudFound_P, train_preds)
+test_f1 <- MLmetrics::F1_Score(test$FraudFound_P, test_preds)
+
+caret::confusionMatrix(table(test$FraudFound_P, test_preds))
+
+print(paste("Classification Tree Training accuracy:", round(train_acc, 2)))
+print(paste("Classification Tree Testing accuracy:", round(test_acc, 2)))
+print(paste("Classification Tree Training F1 score:", round(train_f1, 2)))
+print(paste("Classification Tree Testing F1 score:", round(test_f1, 2)))
+print(paste("Classification Tree Testing Balanced Accuracy:", as.numeric(caret::confusionMatrix(table(test$FraudFound_P, test_preds))$byClass['Balanced Accuracy'][1])))
+
+# Draw Pretty Confusion Matrix
+draw_confusion_matrix(caret::confusionMatrix(table(test_preds, test$FraudFound_P)))
+
+```
+
+
+### **Classification Tree Summary:** the classification tree performs more strongly than either GLM due to the high **balanced accuracy of 65%**. **The F1-score is also high at 93%.**
+
+# **Support Vector Machine (SVM)**
+
+```{r b8, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+# Convert y variable to factor
+train$FraudFound_P <- as.factor(train$FraudFound_P)
+
+# The positive class is 6 times more important for us (analyzed different value results)
+class_weights <- list("0" = 1, "1" = 6)
+
+# Construct Radial SVM model with our class weights set above
+svm.model <- svm(factor(FraudFound_P) ~ ., data = train, scale=TRUE, 
+                                            kernel = "radial",
+                                            class.weights = class_weights)
+# Make prediction on test set
+svm_pred <- predict(svm.model, test)
+
+# Generate confusion matrix
+caret::confusionMatrix(table(test$FraudFound_P, svm_pred))
+
+print(paste("SVM Test F1-score:", MLmetrics::F1_Score(test$FraudFound_P, svm_pred)))
+
+print(paste("SVM Test Balanced Accuracy:", as.numeric(caret::confusionMatrix(table(svm_pred,test$FraudFound_P))$byClass['Balanced Accuracy'][1])))
+
+# Draw Pretty Confusion Matrix
+draw_confusion_matrix(caret::confusionMatrix(table(svm_pred, test$FraudFound_P)))
+
+```
+
+
+
+### **SVM Summary:** the **F1-score of 93% and Balanced Accuracy of 65%** of the SVM is consistent with the classification tree.
+
+# **Naive Bayes**
+
+```{r b9, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+nb.model <- naivebayes::naive_bayes(FraudFound_P ~ ., data = train)
+nb_pred <- predict(nb.model, test)
+
+caret::confusionMatrix(table(test$FraudFound_P, nb_pred))
+
+print(paste("Naive Best Test F1-Score:", MLmetrics::F1_Score(test$FraudFound_P, nb_pred)))
+
+print(paste("Naive Bayes Test Balanced Accuracy:", as.numeric(caret::confusionMatrix(table(nb_pred,test$FraudFound_P))$byClass['Balanced Accuracy'][1])))
+
+# Draw Pretty Confusion Matrix
+draw_confusion_matrix(caret::confusionMatrix(table(nb_pred, test$FraudFound_P)))
+
+```
+
+
+
+### **Naive Bayes Summary:** the Naive Bayes model returns an F1-score of 96% and Balanced Accuracy of 55%, indicating that the classification tree and SVM are the best performing models.
+
+# **Ensemble Model**
+
+### Below we have implemented an ensemble model that combines the output of all 5 models. For each prediction (row), if the row sum is greater than or equal to 3, the predicted value will be set to 1. This means a majority of the models predicted that particular record to be fraudulent. The resulting ensemble model should be more robust and accurate than the models individually.
+
+```{r b10, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+ensemble <- data.frame(cbind(logistic_all_vars = as.numeric(log_all_vars_pred),
+                             logistic_post_stepwise = as.numeric(log_step_pred),
+                             classification_tree = as.numeric(levels(tree_pred))[tree_pred],
+                             naive_bayes = as.numeric(levels(nb_pred))[nb_pred],
+                             svm = as.numeric(levels(svm_pred))[svm_pred]))
+
+# Compute Majority
+ensemble$final_prediction <- ifelse(rowSums(ensemble) >= 3, 1, 0)
+
+# Summary
+confusionMatrix(factor(test$FraudFound_P), factor(ensemble$final_prediction))
+
+print(paste("Ensemble Model Test Final F1-Score:", MLmetrics::F1_Score(test$FraudFound_P, ensemble$final_prediction)))
+
+print(paste("Ensemble Model Test Final Balanced Accuracy:", as.numeric(caret::confusionMatrix(table(ensemble$final_prediction,test$FraudFound_P))$byClass['Balanced Accuracy'][1])))
+
+# Draw Pretty Confusion Matrix
+draw_confusion_matrix(caret::confusionMatrix(table(ensemble$final_prediction, test$FraudFound_P)))
+
+```
+
+
+### **Ensemble Final Summary:** The ensemble model returned strong predictive power with an **F1-score of 93% and Balanced Accuracy of 65%**. A balanced accuracy of 65% means that the model has correctly classified 65% of the samples on average across all classes. Though this number is not particularly high, helping an insurance company more easily catch a few cases of vehicle insurance fraud can make a difference. This number does not have to be high in order to have a positive effect for the company.
+
+# **Unsupervised Analysis using t-SNE**
+
+### t-SNE (t-Distributed Stochastic Neighbor Embedding) is a machine learning algorithm used for dimensionality reduction and data visualization. It is a nonlinear method for reducing the high-dimensional data into a lower-dimensional space, typically 2D or 3D, while preserving the local and global structure of the data.
+
+```{r b7, echo=TRUE, warning=FALSE, message=FALSE, include=TRUE}
+
+numeric_data <- select_if(df, is.numeric)
+
+# Run t-SNE
+set.seed(123)
+tsne <- Rtsne(numeric_data, check_duplicates = FALSE)
+
+# Visualize t-SNE plot
+tsne_df <- data.frame(tsne$Y, FraudFound_P = df$FraudFound_P)
+ggplot(tsne_df, aes(x = tsne$Y[, 1], y = tsne$Y[, 2], color = factor(FraudFound_P))) +
+  geom_point() +
+  scale_color_manual(values = c("blue", "red")) +
+  theme_minimal()
+```
